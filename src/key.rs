@@ -2,6 +2,7 @@ use crate::decor::InternalString;
 use crate::parser;
 use combine::stream::state::State;
 use std::str::FromStr;
+use crate::decor::Decor;
 
 /// Key as part of a Key/Value Pair or a table header.
 ///
@@ -26,10 +27,35 @@ use std::str::FromStr;
 ///
 /// To parse a key use `FromStr` trait implementation: `"string".parse::<Key>()`.
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Clone)]
-pub struct Key {
+pub struct SimpleKey {
+    // Repr.raw_value have things like single quotes.
+    pub(crate) decor: Decor,
+    pub(crate) raw: InternalString,
     key: InternalString,
-    raw: InternalString,
 }
+
+// Generally, a key is made up of a list of simple-key's separated by dots.
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Clone)]
+pub struct Key {
+    raw: InternalString,
+    pub(crate) parts: Vec<SimpleKey>,
+}
+
+// impl PartialEq for Key {
+//     fn eq(&self, other: &Self) -> bool {
+//         if self.key.len() != other.key.len() {
+//             return false;
+//         }
+        
+//         for i in 0..self.key.len() {
+//             if self.key[i].raw_value != other.key.raw_value {
+//                 return false;
+//             }
+//         }
+//         true
+//     }
+// }
+// impl Eq for Key {}
 
 impl FromStr for Key {
     type Err = parser::TomlError;
@@ -54,14 +80,63 @@ impl Key {
             Ok((_, ref rest)) if !rest.input.is_empty() => {
                 Err(parser::TomlError::from_unparsed(rest.positioner, s))
             }
-            Ok(((raw, key), _)) => Ok(Key::new(raw, key)),
+            Ok(((raw, parts), _)) => Ok(Key::new(raw.into(), parts)),
             Err(e) => Err(parser::TomlError::new(e, s)),
         }
     }
 
-    pub(crate) fn new(raw: &str, key: InternalString) -> Self {
+    pub(crate) fn new(raw: InternalString, parts: Vec<SimpleKey>) -> Self {
         Self {
-            raw: raw.into(),
+            raw,
+            parts,
+        }
+    }
+
+    /// Returns the parsed key value.
+    pub fn get(&self) -> InternalString {
+        let keys_parts: Vec<_> = self.parts.iter().map(|k| k.key.clone()).collect();
+        keys_parts.join(".")
+    }
+
+    /// Returns the parsed key value with decorators.
+    pub fn get_with_decor(&self) -> InternalString {
+        let keys_parts: Vec<_> = self.parts.iter().map(|k| k.raw.clone()).collect();
+        keys_parts.join(".")
+
+        // same as raw()?
+    }
+
+    /// Returns the key raw representation.
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    /// Get key path.
+    pub fn get_key_path(&self) -> &[SimpleKey] {
+        &self.parts
+    }
+
+    /// Get key path.
+    pub fn get_string_path(&self) -> Vec<InternalString> {
+        self.parts.iter().map(|r| r.key.clone()).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.parts.len()
+    }
+
+    pub fn is_dotted_key(&self) -> bool {
+        self.parts.len() > 1
+    }
+}
+
+
+impl SimpleKey {
+    // TODO: repr and raw are same?
+    pub(crate) fn new(decor: Decor, raw: InternalString, key: InternalString) -> Self {
+        Self {
+            decor,
+            raw,
             key,
         }
     }
@@ -77,9 +152,10 @@ impl Key {
     }
 }
 
+
 #[doc(hidden)]
 impl Into<InternalString> for Key {
     fn into(self) -> InternalString {
-        self.key
+        self.get()
     }
 }

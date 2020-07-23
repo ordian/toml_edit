@@ -647,4 +647,88 @@ fn test_inline_table_append() {
     assert!(b.is_empty());
 }
 
+
+// Dotted keys
+#[test]
+fn test_dotted_keys_insert() {
+    given(r#"
+        [servers]
+
+        [servers.alpha]
+        ip = "10.0.0.1"
+        dc = "eqdc10"
+
+        [other.table]"#
+    ).running(|root| {
+        root["za.b.c"] = value("10.0.0.3");
+        root["a.b.d"] = value(1);
+        root["d.b.d"] = value(1);
+        root["c.b.d"] = value(1);
+        root["b.b.d"] = value(1);
+        root["a.'c'.d"] = value(3);
+        root["x"] = value(3);
+    
+        root.sort_values();
+    }).produces(r#"a.'c'.d = 3
+a.b.d = 1
+b.b.d = 1
+c.b.d = 1
+d.b.d = 1
+x = 3
+za.b.c = "10.0.0.3"
+
+        [servers]
+
+        [servers.alpha]
+        ip = "10.0.0.1"
+        dc = "eqdc10"
+
+        [other.table]
+"#
+    );
+}
+
+#[test]
+fn test_dotted_keys_remove() {
+    given(r#"x.y=2"#).running(|root| {
+        // Remove works.
+        root["a.b"] = value(3);
+        assert!(root["a"]["b"].as_integer().unwrap() == 3);
+        root.remove("a.b");
+        
+        // Repeated insert and remove works.
+        root["a.c"] = value(2);
+        root.remove("a.b");
+        root["a.c"] = value("string");
+        root.remove("a.b");
+        root["a.c"] = value("derp");
+    }).produces(r#"x.y=2
+a.c = "derp"
+"#
+    );
+}
+
+// TODO: finish this.
+#[test]
+fn test_dotted_keys_table_interaction() {
+    given(r#"
+        [other.table]"#
+    ).running(|root| {
+        root["servers.thing"] = value(4);
+        // This would delete the dotted key servers.thing. So don't do this.
+        // root["servers"] = table();
+        root["servers"]["alpha"] = table();
+        root["servers"]["alpha"]["ip"] = value("10.0.0.1");
+        root["servers"]["alpha"]["dc"] = value("eqdc10");
+    }).produces(r#"servers.thing = 4
+
+        [other.table]
+
+[servers.alpha]
+ip = "10.0.0.1"
+dc = "eqdc10"
+"#
+    );
+}
+
 } // mod tests

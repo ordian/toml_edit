@@ -1,9 +1,11 @@
 use crate::array_of_tables::ArrayOfTables;
 use crate::decor::{Decor, InternalString, Repr};
 use crate::formatted::{decorated, key_repr};
-use crate::key::Key;
+use crate::key::{Key, SimpleKey};
 use crate::value::{sort_key_value_pairs, Array, DateTime, InlineTable, Value};
+use crate::parser::TomlParser;
 use linked_hash_map::LinkedHashMap;
+use std::cell::Cell;
 
 // TODO: add method to convert a table into inline table
 
@@ -14,12 +16,17 @@ pub struct Table {
     // comments/spaces before and after the header
     pub(crate) decor: Decor,
     // whether to hide an empty table
+    // For std headers or array headers, [a.b.c], a, a.b are implicit.
     pub(crate) implicit: bool,
+    // In a.b = val, a is for dotted if [a] has not 
+    // been previously created.
+    pub(crate) has_dotted: bool,
     // used for putting tables back in their original order when serialising.
     // Will be None when the Table wasn't parsed from a file.
     pub(crate) position: Option<usize>,
 }
 
+// See parse_keyval to see what goes into key and value of this hash map.
 pub(crate) type KeyValuePairs = LinkedHashMap<InternalString, TableKeyValue>;
 
 /// Type representing either a value, a table, an array of tables, or none.
@@ -33,6 +40,10 @@ pub enum Item {
     Table(Table),
     /// Type representing array of tables.
     ArrayOfTables(ArrayOfTables),
+    /// Type for display walker to know where (during walk) to
+    /// print dotted key. To get value, parse
+    /// the key and descend table tree.
+    DottedKeyMarker(Vec<SimpleKey>),
 }
 
 impl Default for Item {
@@ -152,11 +163,28 @@ impl Table {
     ///
     /// To insert to table, use `entry` to return a mutable reference
     /// and set it to the appropriate value.
-    pub fn entry<'a>(&'a mut self, key: &str) -> &'a mut Item {
-        let parsed_key = key.parse::<Key>().expect("invalid key");
-        &mut self
+    pub fn entry<'a>(&'a mut self, key_str: &str) -> &'a mut Item {
+        let parsed_key = key_str.parse::<Key>().expect("invalid key");
+        let path = parsed_key.get_key_path();
+        let key = &path[path.len() - 1];
+
+        let table = if parsed_key.is_dotted_key() {
+            // Insert the marker for dotted key.
+            self.items
+                .entry(parsed_key.raw().to_owned())
+                .or_insert(TableKeyValue::new(
+                    key_repr(parsed_key.raw()),
+                    Item::DottedKeyMarker(parsed_key.parts.clone())
+                ));
+            TomlParser::descend_path(self, &path[..path.len() - 1], 0, true)
+                .expect("the table path is valid; qed")
+        } else {
+            self
+        };
+
+        &mut table
             .items
-            .entry(parsed_key.get().to_owned())
+            .entry(key.get().to_owned())
             .or_insert(TableKeyValue::new(key_repr(parsed_key.raw()), Item::None))
             .value
     }
@@ -186,6 +214,10 @@ impl Table {
     pub fn set_implicit(&mut self, implicit: bool) {
         self.implicit = implicit;
     }
+
+    pub fn set_has_dotted(&mut self, has_dotted: bool) {
+        self.has_dotted = has_dotted;
+    }
 }
 
 impl Item {
@@ -208,6 +240,16 @@ impl Item {
             _ => None,
         }
     }
+
+    /// Should this item be sorted?
+    pub fn is_sortable_name(&self) -> bool {
+        match *self {
+            Item::Value(_) => true,
+            Item::DottedKeyMarker(_) => true,
+            _ => false,
+        }
+    }
+
     /// Casts `self` to table.
     pub fn as_table(&self) -> Option<&Table> {
         match *self {

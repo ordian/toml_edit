@@ -38,6 +38,7 @@ fn pair_to_json((key, value): (&str, Item)) -> (String, Json) {
         ),
         Item::Table(ref table) => to_json(iter_to_owned(table.iter())),
         Item::None => Json::Null,
+        Item::DottedKeyMarker(_) => Json::Null,
     };
     (key.to_owned(), json)
 }
@@ -54,6 +55,7 @@ fn to_json(iter: OwnedIter<'_>) -> Json {
 
 fn run(json: &str, toml: &str) {
     let doc = toml.parse::<Document>();
+
     assert!(doc.is_ok());
     let doc = doc.unwrap();
 
@@ -376,4 +378,9 @@ t!(
     test_windows_path,
     "fixtures/valid/windows-path.json",
     "fixtures/valid/windows-path.toml"
+);
+t!(
+    test_dotted_key,
+    "fixtures/valid/dotted-key.json",
+    "fixtures/valid/dotted-key.toml"
 );

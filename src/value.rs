@@ -502,10 +502,17 @@ impl Value {
     }
 }
 
-pub(crate) fn sort_key_value_pairs(items: &mut LinkedHashMap<InternalString, TableKeyValue>) {
-    let mut keys: Vec<InternalString> = items
+
+pub(crate) fn sort_key_value_pairs(items: &mut KeyValuePairs) {
+    let mut keys: Vec<_> = items
         .iter()
-        .filter_map(|i| (i.1).value.as_value().map(|_| i.0))
+        .filter_map(|i| {
+            if (i.1).value.is_sortable_name() {
+                Some(i.0)
+            } else {
+                None
+            }
+        })
         .cloned()
         .collect();
     keys.sort();

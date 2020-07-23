@@ -1,0 +1,8 @@
+name = "Orange"
+physical.color = "orange"
+physical.shape = "round"
+site."google.com" = true
+[table]
+bowl.pepper = 3
+[table.bowl.salt]
+tuna.jar = 1

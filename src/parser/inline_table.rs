@@ -1,10 +1,11 @@
-use crate::decor::{InternalString, Repr};
+use crate::decor::{InternalString};
 use crate::formatted::decorated;
 use crate::parser::errors::CustomError;
-use crate::parser::key::key;
+use crate::parser::key::key_path2;
 use crate::parser::trivia::ws;
 use crate::parser::value::value;
 use crate::table::{Item, TableKeyValue};
+use crate::decor::Repr;
 use crate::value::InlineTable;
 use combine::char::char;
 use combine::stream::RangeStream;
@@ -62,17 +63,18 @@ parse!(inline_table_keyvals() -> (&'a str, Vec<(InternalString, TableKeyValue)>)
 
 parse!(keyval() -> (InternalString, TableKeyValue), {
     (
-        attempt((ws(), key(), ws())),
+        attempt(key_path2()),
         char(KEYVAL_SEP),
         (ws(), value(), ws()),
-    ).map(|(k, _, v)| {
+    ).map(|(key, _, v)| {
         let (pre, v, suf) = v;
         let v = decorated(v, pre, suf);
-        let (pre, (raw, key), suf) = k;
+
         (
-            key,
+            key.get(),
             TableKeyValue {
-                key: Repr::new(pre, raw, suf),
+                // At least one, TODO: fix me for dotted.
+                key: Repr::new(key.parts[0].decor.prefix.clone(), key.parts[0].raw.clone(), key.parts[0].decor.suffix.clone()),
                 value: Item::Value(v),
             }
         )

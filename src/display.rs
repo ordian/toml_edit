@@ -2,6 +2,10 @@ use crate::decor::{Formatted, Repr};
 use crate::document::Document;
 use crate::table::{Item, Table};
 use crate::value::{Array, DateTime, InlineTable, Value};
+use crate::key::Key;
+use std::str::FromStr;
+use std::cell::RefCell;
+
 use std::fmt::{Display, Formatter, Result, Write};
 
 impl Display for Repr {
@@ -110,6 +114,35 @@ impl Table {
     }
 }
 
+fn visit_dotted_key(
+    f: &mut dyn Write,
+    table: &Table,
+    key: &Key
+) -> Result {
+    // Descend to dotted key given parts.
+    let mut current = table;
+    for p in &key.parts[.. key.parts.len() - 1] {
+        let next = match current.get(p.get()) {
+            None => return Err(std::fmt::Error),
+            Some(thing) => thing
+        };
+        current = match next.as_table() {
+            None => return Err(std::fmt::Error),
+            Some(thing) => thing
+        }
+    }
+    let real_kv = match current.items.get(key.parts[key.parts.len() - 1].get()) {
+        None => return Err(std::fmt::Error),
+        Some(thing) => thing
+    };
+
+
+    if let Item::Value(ref value) = real_kv.value {
+        writeln!(f, "{}={}", real_kv.key, value)?
+    }
+    Ok(())
+}
+
 fn visit_table(
     f: &mut dyn Write,
     table: &Table,
@@ -122,15 +155,26 @@ fn visit_table(
         write!(f, "{}[[", table.decor.prefix)?;
         write!(f, "{}", path.join("."))?;
         writeln!(f, "]]{}", table.decor.suffix)?;
-    } else if !(table.implicit && table.values_len() == 0) {
+    } else if !(table.implicit && table.values_len() == 0) &&
+              !(table.implicit && table.has_dotted) {
         write!(f, "{}[", table.decor.prefix)?;
         write!(f, "{}", path.join("."))?;
         writeln!(f, "]{}", table.decor.suffix)?;
     }
     // print table body
     for kv in table.items.values() {
+        let key = Key::from_str(&kv.key.raw_value).unwrap();
         if let Item::Value(ref value) = kv.value {
-            writeln!(f, "{}={}", kv.key, value)?;
+            // If this key is a dotted key it should have been 
+            // written out in the parent table of first simple-key
+            // of the dotted key.
+            if !key.is_dotted_key() {
+                writeln!(f, "{}={}", kv.key, value)?;
+            }
+        } else if let Item::DottedKeyMarker(_) = kv.value {
+            if let Err(_e) = visit_dotted_key(f, table, &key) {
+                eprintln!("Something went wrong with dotted key {}, continuing.", key.get());
+            }
         }
     }
     Ok(())

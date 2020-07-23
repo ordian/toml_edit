@@ -20,11 +20,12 @@ pub(crate) use self::key::key as key_parser;
 pub(crate) use self::value::value as value_parser;
 
 use crate::document::Document;
-use crate::key::Key;
+// use crate::decor::InternalString;
+use crate::key::SimpleKey;
 
 pub struct TomlParser {
     document: Box<Document>,
-    current_table_path: Vec<Key>,
+    current_table_path: Vec<SimpleKey>,
     current_table_position: usize,
 }
 
@@ -386,13 +387,16 @@ trimmed in raw strings.
             ("a", "a"),
             (r#""hello\n ""#, "hello\n "),
             (r#"'hello\n '"#, "hello\\n "),
+            ("a.b.c", "a.b.c"),
+            ("a. b.c", "a.b.c"),
+            // (r#"a.'"b"'.c"#, r#"a.'"b"'.c"#),
         ];
 
         for &(input, expected) in &cases {
-            let parsed = key::key().easy_parse(State::new(input));
+            let parsed = key::key_path2().easy_parse(State::new(input));
             assert!(parsed.is_ok());
-            let ((.., k), rest) = parsed.unwrap();
-            assert_eq!(k, expected);
+            let (k, rest) = parsed.unwrap();
+            assert_eq!(k.get(), expected);
             assert_eq!(rest.input.len(), 0);
         }
     }
@@ -475,7 +479,9 @@ that
         ];
         for document in &documents {
             let doc = TomlParser::parse(document);
-
+            if let Err(e) = doc.clone() {
+                println!("{}", e);
+            }
             assert!(doc.is_ok());
             let doc = doc.unwrap();
 

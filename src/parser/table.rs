@@ -1,9 +1,9 @@
 use crate::array_of_tables::ArrayOfTables;
 use crate::decor::{Decor, InternalString};
-use crate::key::Key;
+use crate::key::{SimpleKey, Key};
 use crate::parser::errors::CustomError;
-use crate::parser::key::key;
-use crate::parser::trivia::{line_trailing, ws};
+use crate::parser::key::{key_path2};
+use crate::parser::trivia::{line_trailing};
 use crate::parser::TomlParser;
 use crate::table::{Item, Table};
 use combine::char::char;
@@ -17,7 +17,7 @@ use std::mem;
 use std::ops::DerefMut;
 
 // table-key-sep   = ws %x2E ws  ; . Period
-const TABLE_KEY_SEP: char = '.';
+// const TABLE_KEY_SEP: char = '.';
 // std-table-open  = %x5B ws     ; [ Left square bracket
 const STD_TABLE_OPEN: char = '[';
 // std-table-close = ws %x5D     ; ] Right square bracket
@@ -29,20 +29,26 @@ const ARRAY_TABLE_CLOSE: &str = "]]";
 
 // note: this rule is not present in the original grammar
 // key-path = key *( table-key-sep key)
-parse!(key_path() -> Vec<Key>, {
-    sep_by1(between(ws(), ws(), key().map(|(raw, key)| Key::new(raw, key))),
-            char(TABLE_KEY_SEP))
-});
+// parse!(key_path() -> Vec<Key>, {
+//     sep_by1(between(ws(), ws(), key().map(|(raw, key)| Key::new_dotted(raw.into(), key))),
+//             char(TABLE_KEY_SEP))
+// });
+
+// // Parse key or key path in table.
+// parse!(keyval_key_path() -> Vec<Key>, {
+//     sep_by1((ws(), key(), ws()).map(|(_, (raw, key), suf)| Key::new_dotted(raw.to_string() + suf, key)),
+//             char(TABLE_KEY_SEP))
+// });
 
 // ;; Standard Table
 
 // std-table = std-table-open key *( table-key-sep key) std-table-close
 toml_parser!(std_table, parser, {
     (
-        between(char(STD_TABLE_OPEN), char(STD_TABLE_CLOSE), key_path()),
+        between(char(STD_TABLE_OPEN), char(STD_TABLE_CLOSE), key_path2()),
         line_trailing(),
     )
-        .and_then(|(h, t)| parser.borrow_mut().deref_mut().on_std_header(&h, t))
+        .and_then(|(h, t)| parser.borrow_mut().deref_mut().on_std_header(&h.get_key_path(), t))
 });
 
 // ;; Array Table
@@ -53,11 +59,11 @@ toml_parser!(array_table, parser, {
         between(
             range(ARRAY_TABLE_OPEN),
             range(ARRAY_TABLE_CLOSE),
-            key_path(),
+            key_path2(),
         ),
         line_trailing(),
     )
-        .and_then(|(h, t)| parser.borrow_mut().deref_mut().on_array_header(&h, t))
+        .and_then(|(h, t)| parser.borrow_mut().deref_mut().on_array_header(&h.get_key_path(), t))
 });
 
 // ;; Table
@@ -82,9 +88,9 @@ parser! {
     }
 }
 
-pub(crate) fn duplicate_key(path: &[Key], i: usize) -> CustomError {
+pub(crate) fn duplicate_key(path: &[SimpleKey], i: usize) -> CustomError {
     assert!(i < path.len());
-    let header: Vec<&str> = path[..i].iter().map(Key::raw).collect();
+    let header: Vec<&str> = path[..i].iter().map(SimpleKey::raw).collect();
     CustomError::DuplicateKey {
         key: path[i].raw().into(),
         table: format!("[{}]", header.join(".")),
@@ -94,15 +100,18 @@ pub(crate) fn duplicate_key(path: &[Key], i: usize) -> CustomError {
 impl TomlParser {
     pub(crate) fn descend_path<'a>(
         table: &'a mut Table,
-        path: &[Key],
+        path: &[SimpleKey],
         i: usize,
+        dotted_value: bool,
     ) -> Result<&'a mut Table, CustomError> {
         if let Some(key) = path.get(i) {
             let entry = table.entry(key.raw());
             if entry.is_none() {
                 let mut new_table = Table::new();
                 new_table.set_implicit(true);
-
+                if dotted_value {
+                    new_table.set_has_dotted(true);
+                }
                 *entry = Item::Table(new_table);
             }
             match *entry {
@@ -113,10 +122,10 @@ impl TomlParser {
                     let index = array.len() - 1;
                     let last_child = array.get_mut(index).unwrap();
 
-                    Self::descend_path(last_child, path, i + 1)
+                    Self::descend_path(last_child, path, i + 1, dotted_value)
                 }
                 Item::Table(ref mut sweet_child_of_mine) => {
-                    TomlParser::descend_path(sweet_child_of_mine, path, i + 1)
+                    TomlParser::descend_path(sweet_child_of_mine, path, i + 1, dotted_value)
                 }
                 _ => unreachable!(),
             }
@@ -125,14 +134,15 @@ impl TomlParser {
         }
     }
 
-    fn on_std_header(&mut self, path: &[Key], trailing: &str) -> Result<(), CustomError> {
+    
+    fn on_std_header(&mut self, path: &[SimpleKey], trailing: &str) -> Result<(), CustomError> {
         debug_assert!(!path.is_empty());
 
         let leading = mem::replace(&mut self.document.trailing, InternalString::new());
         let table = self.document.as_table_mut();
         self.current_table_position += 1;
 
-        let table = Self::descend_path(table, &path[..path.len() - 1], 0);
+        let table = Self::descend_path(table, &path[..path.len() - 1], 0, false);
         let key = &path[path.len() - 1];
 
         match table {
@@ -168,14 +178,14 @@ impl TomlParser {
         }
     }
 
-    fn on_array_header(&mut self, path: &[Key], trailing: &str) -> Result<(), CustomError> {
+    fn on_array_header(&mut self, path: &[SimpleKey], trailing: &str) -> Result<(), CustomError> {
         debug_assert!(!path.is_empty());
 
         let leading = mem::replace(&mut self.document.trailing, InternalString::new());
         let table = self.document.as_table_mut();
 
         let key = &path[path.len() - 1];
-        let table = Self::descend_path(table, &path[..path.len() - 1], 0);
+        let table = Self::descend_path(table, &path[..path.len() - 1], 0, false);
 
         match table {
             Ok(table) => {

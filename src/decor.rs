@@ -8,15 +8,15 @@ pub struct Formatted<T> {
 
 // String representation of a key or a value
 // together with a decoration.
-#[derive(Eq, PartialEq, Clone, Debug, Hash)]
-pub(crate) struct Repr {
+#[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Debug, Hash)]
+pub struct Repr {
     pub decor: Decor,
     pub raw_value: InternalString,
 }
 
 /// A prefix and suffix,
 /// including comments, whitespaces and newlines.
-#[derive(Eq, PartialEq, Clone, Default, Debug, Hash)]
+#[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Default, Debug, Hash)]
 pub struct Decor {
     pub(crate) prefix: InternalString,
     pub(crate) suffix: InternalString,
